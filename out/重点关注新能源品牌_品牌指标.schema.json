@@ -1,0 +1,78 @@
+{
+  "file": "重点关注新能源品牌_品牌指标.csv",
+  "rows": 18,
+  "fields": [
+    {
+      "name": "品牌",
+      "example": "AITO",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "max_year",
+      "example": "2026",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "max_month",
+      "example": "2",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "max_年月",
+      "example": "2026-02",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "max月销量",
+      "example": "16381",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "上月销量",
+      "example": "38819",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "月环比",
+      "example": "-0.578016",
+      "dtype": "float",
+      "null_rate": 0.0
+    },
+    {
+      "name": "去年同月销量",
+      "example": "11137",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "月同比",
+      "example": "0.470863",
+      "dtype": "float",
+      "null_rate": 0.0
+    },
+    {
+      "name": "累计销量(1~Max月)",
+      "example": "55200",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "去年累计销量(1~Max月)",
+      "example": "32862",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "累计同比(1~Max月)",
+      "example": "0.679752",
+      "dtype": "float",
+      "null_rate": 0.0
+    }
+  ]
+}
