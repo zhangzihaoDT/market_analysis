@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 .DS_Store
 data/__pycache__/
+data/*.csv
 scripts/__pycache__/
 tools/__pycache__/
