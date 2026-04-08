@@ -10,6 +10,9 @@ from pathlib import Path
 
 from tools.query_csv import query_csv_tool
 
+import tempfile
+import os
+
 
 def load_dotenv(dotenv_path: Path) -> dict[str, str]:
     if not dotenv_path.exists():
@@ -249,11 +252,11 @@ def main(argv: list[str]) -> int:
             "type": "function",
             "function": {
                 "name": "query_csv",
-                "description": "Query a CSV under ./out or ./data with simple filters and return rows as JSON",
+                "description": "Query a CSV under ./out or ./data with simple filters and return rows as JSON (path must be a CSV file, not a directory)",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "CSV path, absolute or relative to repo"},
+                        "path": {"type": "string", "description": "CSV file path (not directory), absolute or relative to repo"},
                         "select": {"type": "array", "items": {"type": "string"}},
                         "filters": {
                             "type": "array",
@@ -284,11 +287,25 @@ def main(argv: list[str]) -> int:
         query = sys.stdin.read().strip()
 
     system_prompt = (
-        "你是一个数据分析助手。你可以通过工具 run_script 来运行本仓库 ./scripts 下的脚本。\n"
-        "脚本一般会把结果写入 ./out 目录，并在 stdout 中打印一行 '输出: <path>'，并可能输出 schema JSON。\n"
-        "你还可以用工具 query_csv 对 ./out 或 ./data 下的 CSV 做筛选查询。\n"
-        "你必须采用循环模式：每一轮先做 planning（明确需要哪些脚本、要读哪个 schema、要在 CSV 查什么），再执行查询；最多 5 轮。\n"
-        "当你认为信息足够时，输出最终答案；如果还需要下一轮，输出 NEED_MORE。"
+        "你是一个数据分析助手，拥有 ./data/ 下全部数据的读取权限。\n"
+        "\n"
+        "数据集（基础表，位于 ./data）：\n"
+        "1) 细分市场销量：按区域（parent_region_name）与价格段（TP 5万1档）划分的市场销量。\n"
+        "2) 分价格段量价：按品牌-车型构建的单一车型 TP 价格重心数据（TP重心 (数据桶)），用于查看各桶区间有哪些车型及其销量/价格表现。\n"
+        "3) 重点关注新能源品牌：重点关注品牌的历史销量表现。\n"
+        "\n"
+        "可用工具：\n"
+        "- run_script：运行 ./scripts 下脚本，通常产出 ./out 下的派生表；stdout 会包含 '输出: <path>'，并可能包含 schema JSON（'输出Schema: <path>'）。\n"
+        "- query_csv：对 ./data 或 ./out 下的 CSV 做筛选查询。\n"
+        "\n"
+        "数据源选择：\n"
+        "1) 若是明细核对/字段级问题/明确指向基础表，优先查 ./data。\n"
+        "2) 若是指标汇总/同比环比/排名/品牌级 KPI，优先 run_script 生成 ./out，再查 ./out。\n"
+        "3) 若两者都需要：先判断派生表是否必要，必要时先 run_script，再用基础表补充。\n"
+        "\n"
+        "工作流（最多 5 轮循环）：\n"
+        "- step1 planning：明确使用基础表还是派生表；要运行哪些脚本；要读哪些 schema；要做哪些 CSV 查询。\n"
+        "- step2 执行：调用工具并基于结果回答；若信息不足输出 NEED_MORE，否则输出最终答案。"
     )
 
     messages: list[dict] = [
@@ -326,8 +343,19 @@ def main(argv: list[str]) -> int:
 
         log(f"=== Loop Round {round_idx + 1}/{max_rounds}: execute ===")
         execution_prompt = (
-            "按上一条 planning 执行：需要运行脚本就调用 run_script；需要查数据就调用 query_csv。\n"
-            "在拿到足够信息前可多次调用工具。完成后：如果还需要下一轮，输出 NEED_MORE；否则输出最终答案。"
+            "按上一条 planning 执行，但尽量避免多次工具调用：\n"
+            "- 优先“写代码一次算清楚”的方式解决问题。直接生成能够读取 ./data 或 ./out 下目标 CSV、完成筛选/聚合并给出答案的 Python 代码。\n"
+            "- 如果确需生成派生表，最多执行一次 run_script；随后用代码直接对 CSV 进行计算。\n"
+            "- 严禁对目录调用 query_csv；path 必须为 CSV 文件路径。\n"
+            "- 返回格式：仅返回一段 Python 代码，使用如下定界符包裹：\n"
+            "‹execute_python›\n"
+            "<python code here>\n"
+            "‹/execute_python›\n"
+            "- 代码要求：\n"
+            "  1) 只用标准库（csv、json、pathlib 等）；\n"
+            "  2) 显式写出目标 CSV 路径与筛选条件；\n"
+            "  3) 打印最终答案与关键中间汇总（如各桶/各品牌数值）。\n"
+            "若信息仍不足以写出可靠代码，再调用工具；若还需要下一轮，输出 NEED_MORE；否则直接给出最终答案。"
         )
         messages.append({"role": "user", "content": execution_prompt})
 
@@ -349,6 +377,48 @@ def main(argv: list[str]) -> int:
                 content = (msg.get("content") or "").strip()
                 if content:
                     log(content)
+                # Execute embedded python code if present
+                start_tag = "‹execute_python›"
+                end_tag = "‹/execute_python›"
+                if start_tag in content and end_tag in content:
+                    code_blocks: list[str] = []
+                    start_idx = 0
+                    while True:
+                        s = content.find(start_tag, start_idx)
+                        if s == -1:
+                            break
+                        e = content.find(end_tag, s + len(start_tag))
+                        if e == -1:
+                            break
+                        code = content[s + len(start_tag):e]
+                        code_blocks.append(code.strip())
+                        start_idx = e + len(end_tag)
+                    if code_blocks:
+                        code = code_blocks[0]
+                        log("[execute_python] detected, running code block")
+                        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as tf:
+                            tf.write(code)
+                            temp_path = tf.name
+                        try:
+                            proc = subprocess.run(
+                                [sys.executable, temp_path],
+                                cwd=str(repo_root),
+                                capture_output=True,
+                                text=True,
+                                timeout=args.timeout,
+                                check=False,
+                                env={**os.environ},
+                            )
+                            if proc.stdout:
+                                print(proc.stdout.rstrip(), flush=True)
+                            if proc.stderr:
+                                log(proc.stderr.rstrip())
+                            return proc.returncode
+                        finally:
+                            try:
+                                os.unlink(temp_path)
+                            except Exception:
+                                pass
                 if content == "NEED_MORE":
                     break
                 print(content, flush=True)

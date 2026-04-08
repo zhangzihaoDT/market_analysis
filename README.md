@@ -35,25 +35,37 @@ python3 scripts/brand_sales_kpi.py
 
 - step1（planning） ：每轮先让模型输出本轮 planning（不调用工具），要求明确：
 
-- 需要跑哪些脚本（如需要）
+- 使用基础表还是派生表：基础表位于 ./data（细分市场销量/分价格段量价/重点关注新能源品牌），派生表位于 ./out
+- 需要跑哪些脚本（如需要）以生成派生表（位于 ./scripts）
 - 需要读取哪些 schema JSON 来确定列含义
 - 需要对哪些 CSV 做哪些 query_csv 查询（filters/select/order_by/limit）
 
 - step2（执行查询） ：按 planning 进入工具执行阶段：
 
-- 用 run*script 运行 scripts/ 下脚本；工具返回里会包含 out/*.csv 与对应 \_.schema.json 的预览
-- 用 query_csv 对 ./out 或 ./data 下 CSV 做筛选查询，返回 JSON 行数据
-- 执行阶段结束时：模型输出 NEED_MORE 进入下一轮；否则输出最终答案并退出
+- 数据源选择策略：
+  - 明细核对/字段级问题/明确指向基础表 → 优先查询 ./data
+  - 指标汇总/同比环比/排名/品牌级 KPI → 优先 run_script 生成 ./out，再查询 ./out
+  - 两者都需 → 先判断派生表是否必要，必要时先 run_script，再用基础表补充
+- 执行优先级与约束：
+  - 优先“写代码一次算清楚”：返回一段 Python 代码，读取 ./data 或 ./out 下的 CSV，完成筛选/聚合并打印最终答案与关键中间汇总
+  - 代码需使用定界符包裹，主程序会自动执行：
+    - ‹execute_python›
+    - …Python 代码…
+    - ‹/execute_python›
+  - 如确需派生表，最多执行一次 run_script；随后用代码直接对 CSV 计算
+  - 使用 query_csv 时 path 必须是 CSV 文件，不能是目录；否则工具会返回可选 CSV 列表
+  - 主程序会在终端 stderr 输出每轮 planning/执行日志与工具调用摘要，stdout 输出最终答案
+  - 信息不足时输出 NEED_MORE 进入下一轮；否则输出最终答案并退出
 
 ### 两种模式有什么不同？
 
 - `python3 main.py --query "..."`：普通对话模式（非思考模式）
   - 更快、输出更短，适合大多数日常问答/数据查询
-  - 支持工具调用（`run_script` / `query_csv`），按需循环（最多 5 轮）后给出最终回答
+  - 支持工具调用与自动执行 ‹execute_python› 代码块，按需循环（最多 5 轮）后给出最终回答
 
 - `python3 main.py --thinking --query "..."`：思考模式（thinking enabled）
   - 模型会输出更强的推理过程（内部会携带 reasoning_content），通常更“稳”，但更慢、token 消耗更高
-  - 同样支持工具调用与循环（最多 5 轮）
+  - 同样支持工具调用与自动执行 ‹execute_python› 代码块，按需循环（最多 5 轮）
   - 注意：思考模式下部分采样参数（如 temperature/top_p 等）不会生效（兼容性考虑仍可传，但会被忽略）
 
 ### 使用示例

@@ -87,6 +87,17 @@ def query_csv_tool(
         return json.dumps({"ok": False, "error": "path not allowed"}, ensure_ascii=False)
     if not p.exists():
         return json.dumps({"ok": False, "error": "file not found"}, ensure_ascii=False)
+    if p.is_dir():
+        # Return a helpful error with candidate CSVs under this directory
+        candidates = [str(x) for x in sorted(p.glob("*.csv"))][:50]
+        return json.dumps(
+            {
+                "ok": False,
+                "error": "path is a directory; provide a CSV file path",
+                "candidates": candidates,
+            },
+            ensure_ascii=False,
+        )
 
     filters_list = filters or []
     limit = max(1, min(int(limit or 20), 500))
