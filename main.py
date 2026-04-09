@@ -375,7 +375,7 @@ def main(argv: list[str]) -> int:
 
     store = StrategyStore(str(repo_root / "strategy_memory.db"))
     retriever = StrategyRetriever(store)
-    patterns = retriever.match(query)
+    patterns = retriever.match(query, limit=3)
     
     if patterns:
         patterns_str = "历史经验（高相关）：\n"
