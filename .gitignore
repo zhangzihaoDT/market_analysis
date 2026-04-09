@@ -6,3 +6,11 @@ data/__pycache__/
 data/*.csv
 scripts/__pycache__/
 tools/__pycache__/
+agent/__pycache__/
+agent/*/__pycache__/
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+strategy_memory.db
