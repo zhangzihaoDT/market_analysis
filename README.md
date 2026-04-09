@@ -74,13 +74,11 @@ python3 scripts/main_brand_sales_kpi.py
 4. Evaluator 后台评估任务质量并落库。如果报错，自动分析错误并重试。
 5. 提取到核心数据后强制终止，直接输出纯文本回答。
 
-### 三种模式说明：
+### 两种模式说明：
 - `python3 main.py --query "..."`：普通对话模式
   - 速度快、消耗低，会自动读取记忆库优化查询策略，适合大多数日常问答和数据查询。
 - `python3 main.py --learn`：学习模式
   - 让 Agent 反思过去执行不佳的查询，将“隐性经验”总结为“显性规则”固化到数据库中。
-- `python3 main.py --thinking --query "..."`：思考模式（thinking enabled）
-  - 模型会输出更强的内部推理过程，逻辑更“稳”，但速度较慢、token 消耗更高。
 
 ### 使用示例：
 ```bash
@@ -90,8 +88,8 @@ python3 main.py --query "20万以上新能源市场 2026 年 2 月总销量"
 # 跨表查询与计算
 python3 main.py --query "运行 main_brand_sales_kpi.py，并找出 2026-02 月同比最高的品牌，给出对应的 max月销量/上月销量/月环比/去年同月销量"
 
-# 使用思考模式深入分析
-python3 main.py --thinking --query "2026年 2 月智己品牌的销量如何?"
+# 触发 LLM 反思与经验学习
+python3 main.py --learn
 ```
 
 **示例输出（节选）：**

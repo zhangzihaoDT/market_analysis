@@ -242,7 +242,7 @@ def deepseek_chat(
     messages: list[dict],
     tools: list[dict] | None,
     timeout_s: int,
-    thinking: bool,
+    thinking: bool = False,
 ) -> dict:
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
@@ -295,7 +295,6 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--query", default="")
     parser.add_argument("--model", default="deepseek-chat")
-    parser.add_argument("--thinking", action="store_true")
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--learn", action="store_true", help="Trigger PatternExtractor to summarize past failed queries")
     args = parser.parse_args(argv)
@@ -364,7 +363,7 @@ def main(argv: list[str]) -> int:
         extractor = PatternExtractor(
             store, 
             deepseek_chat, 
-            {"base_url": base_url, "api_key": api_key, "model": args.model, "timeout_s": args.timeout, "thinking": args.thinking, "tools": None}
+            {"base_url": base_url, "api_key": api_key, "model": args.model, "timeout_s": args.timeout, "thinking": False, "tools": None}
         )
         extractor.summarize()
         print("Learning from past mistakes completed.", flush=True)
@@ -424,7 +423,7 @@ def main(argv: list[str]) -> int:
             messages=messages,
             tools=tool_spec,
             timeout_s=args.timeout,
-            thinking=args.thinking,
+            thinking=False,
         )
         
         choice = (resp.get("choices") or [{}])[0]
