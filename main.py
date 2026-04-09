@@ -7,9 +7,14 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import time
 from pathlib import Path
 
 from tools.execute_sql import execute_sql_tool
+from agent.memory.strategy_store import StrategyStore
+from agent.memory.strategy_retriever import StrategyRetriever
+from agent.memory.pattern_extractor import PatternExtractor
+from agent.evaluator.evaluator import evaluate
 
 def load_dotenv(dotenv_path: Path) -> dict[str, str]:
     if not dotenv_path.exists():
@@ -292,6 +297,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--model", default="deepseek-chat")
     parser.add_argument("--thinking", action="store_true")
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--learn", action="store_true", help="Trigger PatternExtractor to summarize past failed queries")
     args = parser.parse_args(argv)
 
     if not api_key:
@@ -353,9 +359,32 @@ def main(argv: list[str]) -> int:
         }
     ]
 
+    if getattr(args, "learn", False):
+        store = StrategyStore(str(repo_root / "strategy_memory.db"))
+        extractor = PatternExtractor(
+            store, 
+            deepseek_chat, 
+            {"base_url": base_url, "api_key": api_key, "model": args.model, "timeout_s": args.timeout, "thinking": args.thinking, "tools": None}
+        )
+        extractor.summarize()
+        print("Learning from past mistakes completed.", flush=True)
+        return 0
+
     query = args.query.strip()
     if not query:
         query = sys.stdin.read().strip()
+
+    store = StrategyStore(str(repo_root / "strategy_memory.db"))
+    retriever = StrategyRetriever(store)
+    patterns = retriever.match(query)
+    
+    if patterns:
+        patterns_str = "历史经验（高相关）：\n"
+        for p in patterns:
+            patterns_str += f"- 问题模式: {p.get('pattern')}\n  推荐策略: {p.get('strategy')}\n  避免做法: {p.get('anti_pattern')}\n\n"
+        print(f"已注入 {len(patterns)} 条历史经验策略。", file=sys.stderr)
+    else:
+        patterns_str = "暂无历史经验。\n"
 
     dynamic_schemas_str = build_dynamic_schema_prompt(repo_root)
 
@@ -365,6 +394,7 @@ def main(argv: list[str]) -> int:
         "数据集（动态感知，位于 ./data 和 ./out）：\n"
         f"{dynamic_schemas_str}\n"
         "\n"
+        f"{patterns_str}"
         "可用工具：\n"
         "- run_script：运行 ./scripts 下脚本，通常产出 ./out 下的派生表；stdout 会包含 '输出: <path>'，并可能包含 schema JSON（'输出Schema: <path>'）。\n"
         "- execute_sql：使用 DuckDB 直接针对 ./data 或 ./out 下的 CSV 执行 SQL 查询（例如 `SELECT * FROM 'data/xxx.csv' WHERE ... GROUP BY ...`）。\n"
@@ -431,11 +461,37 @@ def main(argv: list[str]) -> int:
                 )
             elif fn == "execute_sql":
                 log(f"[tool call] execute_sql args={raw_args}")
+                start_time = time.time()
+                sql_str = str(call_args.get("sql") or "")
                 result = execute_sql_tool(
                     repo_root,
-                    sql=str(call_args.get("sql") or ""),
+                    sql=sql_str,
                     timeout_s=int(call_args.get("timeout_s") or args.timeout),
                 )
+                latency = time.time() - start_time
+                try:
+                    res_json = json.loads(result)
+                    rows = res_json.get("rows_returned", 0)
+                    err = res_json.get("error", "")
+                    eval_res = evaluate({
+                        "query": query,
+                        "sql": sql_str,
+                        "result_rows": rows,
+                        "error": err
+                    })
+                    
+                    store.log_execution(
+                        query=query,
+                        sql=sql_str,
+                        success=eval_res["success"],
+                        latency=latency,
+                        result_rows=rows,
+                        error=err or ", ".join(eval_res.get("issues", []))
+                    )
+                    if not eval_res["success"]:
+                        log(f"[evaluator] Issues detected: {eval_res['issues']}")
+                except Exception:
+                    pass
             elif fn == "execute_python_code":
                 log(f"[tool call] execute_python_code")
                 result = execute_python_code_tool(

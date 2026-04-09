@@ -2,12 +2,17 @@
 
 本项目是一个基于 Python 和大语言模型（如 DeepSeek）的智能数据分析 Agent。它能够自动从外部系统（Tableau）拉取业务数据、执行预设的指标计算脚本，并通过大模型自动编写、执行 DuckDB SQL 或 Python 代码来回答用户的复杂业务问题。
 
+本项目创新性地引入了 **“Evaluator + Strategy Memory + Strategy Injection” 三层学习架构**，使得 Agent 具备了从历史错误中学习、总结经验并指导后续决策的能力。
+
 ## 项目结构
+- `agent/`：Agent 核心认知架构
+  - `evaluator/`：包含轻量级规则评估器，负责在每次 SQL 执行后判断任务质量并抛出 Issues（如发现 `SELECT *`、查询结果为空等）。
+  - `memory/`：包含经验记忆模块（基于 DuckDB），分为 `strategy_store.py`（存储执行日志与经验模式）、`pattern_extractor.py`（基于 LLM 的经验总结器）和 `strategy_retriever.py`（经验检索器）。
 - `data/`：存放拉取的基础数据（CSV）和数据源配置文件（`data_info.md`）。还会自动生成对应的 `.schema.json` 供大模型感知数据结构。
 - `out/`：存放由指标脚本计算生成的派生数据表及 Schema。
 - `scripts/`：存放业务数据处理和 KPI 计算的 Python 脚本。
 - `tools/`：供 Agent 调用的工具集合，如提供 DuckDB SQL 查询能力的 `execute_sql.py`。
-- `main.py`：Agent 的核心中枢，负责与大模型对话、规划任务、执行工具并返回最终分析结果。
+- `main.py`：Agent 的核心中枢，负责与大模型对话、规划任务、执行工具、评估结果、检索经验并返回最终分析结果。
 
 ## 1. 数据获取与处理 (`data/fetch.py`)
 
@@ -54,19 +59,26 @@ python3 scripts/main_brand_sales_kpi.py
 这是项目的核心调度入口，采用单次 Prompt 统筹规划与多轮自我修复（Self-Correction）的执行闭环。
 
 ### 核心特性：
+- **Evaluator 质量评估**：每次执行工具后，在后台轻量评估质量，捕捉逻辑缺陷或低效查询（如使用了 `SELECT *`）。
+- **Strategy Memory (经验记忆库)**：每次运行的日志落盘在 `strategy_memory.db`，不再用完即弃。
+- **Self-Learning (自动学习)**：通过 `python main.py --learn` 触发 LLM 反思过去失败的案例，抽取出 `pattern`、`strategy`、`anti_pattern` 存入知识库，形成持久记忆。
+- **Strategy Injection (策略注入)**：每次用户提问前，检索最高度匹配的经验策略并动态注入 System Prompt，使 Agent 从“零思考”转变为“基于经验决策”。
 - **Schema 动态感知**：启动时自动扫描 `data/` 和 `out/` 下的 `.schema.json`，新加表无需修改代码即可被 Agent 识别并使用。
 - **DuckDB 极速查询**：内置 `execute_sql` 工具，大模型可以直接写 SQL（支持 JOIN、GROUP BY）在内存中极速查询 CSV，彻底告别写繁琐的 Python 处理代码。
 - **动态 Python 执行与自我修复**：支持 `execute_python_code` 工具，大模型可动态编写并执行复杂 Python 脚本。如果执行报错，系统会将报错信息传回给模型，模型会自动修正代码后重试。
 
 ### 执行工作流（最多 10 轮循环）：
-1. 优先思考并设计解决问题的逻辑。
-2. 优先使用 `execute_sql` 或 `execute_python_code` 直接从数据表获取答案。
-3. 获取执行结果（stdout/stderr）。如果报错，自动分析错误并重试。
-4. 当获取到核心数据后，强制终止探索，直接输出高质量的自然语言业务洞察。
+1. 接收问题，匹配历史经验策略（Strategy Injection）。
+2. 优先思考并设计解决问题的逻辑（遵守避坑指南）。
+3. 优先使用 `execute_sql` 或 `execute_python_code` 探索数据。
+4. Evaluator 后台评估任务质量并落库。如果报错，自动分析错误并重试。
+5. 提取到核心数据后强制终止，直接输出纯文本回答。
 
-### 两种模式说明：
+### 三种模式说明：
 - `python3 main.py --query "..."`：普通对话模式
-  - 速度快、消耗低，适合大多数日常问答和数据查询。
+  - 速度快、消耗低，会自动读取记忆库优化查询策略，适合大多数日常问答和数据查询。
+- `python3 main.py --learn`：学习模式
+  - 让 Agent 反思过去执行不佳的查询，将“隐性经验”总结为“显性规则”固化到数据库中。
 - `python3 main.py --thinking --query "..."`：思考模式（thinking enabled）
   - 模型会输出更强的内部推理过程，逻辑更“稳”，但速度较慢、token 消耗更高。
 
