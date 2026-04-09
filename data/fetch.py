@@ -395,10 +395,20 @@ def pivot_measure_long_to_wide(csv_path: Path) -> bool:
                 out_row = {c: key[i] for i, c in enumerate(id_cols)}
                 rows_by_key[key] = out_row
 
-            if measure_name:
+            if measure_name and measure_value != "":
                 existing = out_row.get(measure_name, "")
-                if existing == "" and measure_value != "":
+                if existing == "":
                     out_row[measure_name] = measure_value
+                else:
+                    # 尝试对数值进行求和聚合
+                    try:
+                        val1 = float(existing.replace(",", ""))
+                        val2 = float(measure_value.replace(",", ""))
+                        new_val = val1 + val2
+                        out_row[measure_name] = str(int(new_val)) if new_val.is_integer() else str(new_val)
+                    except ValueError:
+                        # 如果不是数值，保留第一条非空记录
+                        pass
 
         out_fields = id_cols + measures_in_order
 
@@ -485,12 +495,40 @@ def build_schema_markdown(items: list[tuple[str, Path]]) -> str:
         lines.append(f"- 行数: {total}")
         lines.append("| 字段 | value 举例 | dtype | 空值率 |")
         lines.append("|---|---|---|---|")
+        
+        schema_json_fields = []
         for c in cols:
             ex = (examples.get(c) or "").replace("\n", " ")
             if len(ex) > 80:
                 ex = ex[:80]
             lines.append(f"| {c} | {ex} | {dtypes.get(c, 'string')} | {null_rates.get(c, 0.0):.2%} |")
+            schema_json_fields.append({
+                "name": c,
+                "example": ex,
+                "dtype": dtypes.get(c, "string"),
+                "null_rate": null_rates.get(c, 0.0)
+            })
         lines.append("")
+        
+        # Determine description based on file name
+        description = ""
+        if "细分市场销量" in csv_path.name:
+            description = "按区域（parent_region_name）与价格段（TP 5万1档）划分的市场销量。"
+        elif "分价格段量价" in csv_path.name:
+            description = "按品牌-车型构建的单一车型 TP 价格重心数据（TP重心 (数据桶)），用于查看各桶区间有哪些车型及其销量/价格表现。"
+        elif "重点关注新能源品牌" in csv_path.name:
+            description = "重点关注品牌的历史销量表现。"
+        
+        # Write schema json
+        schema_data = {
+            "file": csv_path.name,
+            "description": description,
+            "rows": total,
+            "fields": schema_json_fields
+        }
+        schema_path = csv_path.with_suffix(".schema.json")
+        schema_path.write_text(json.dumps(schema_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -516,6 +554,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--no-fetch", action="store_true")
     parser.add_argument("--no-transform", action="store_true")
     parser.add_argument("--no-schema", action="store_true")
+    parser.add_argument("--view-name", type=str, default="", help="Only export the specified view by name (e.g. '细分市场销量')")
     args = parser.parse_args(argv)
 
     dotenv = load_dotenv(REPO_ROOT / ".env")
@@ -529,6 +568,13 @@ def main(argv: list[str]) -> int:
     if not views:
         print(f"No view urls found in {args.data_info}", file=sys.stderr)
         return 2
+
+    if args.view_name:
+        filtered_views = [(name, url) for name, url in views if name == args.view_name]
+        if not filtered_views:
+            print(f"View name '{args.view_name}' not found in {args.data_info}", file=sys.stderr)
+            return 2
+        views = filtered_views
 
     view_infos: list[tuple[str, str, str]] = []
     for name, url in views:

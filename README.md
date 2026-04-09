@@ -1,92 +1,94 @@
+# SGM Agentic - 智能数据分析 Agent
+
+本项目是一个基于 Python 和大语言模型（如 DeepSeek）的智能数据分析 Agent。它能够自动从外部系统（Tableau）拉取业务数据、执行预设的指标计算脚本，并通过大模型自动编写、执行 DuckDB SQL 或 Python 代码来回答用户的复杂业务问题。
+
+## 项目结构
+- `data/`：存放拉取的基础数据（CSV）和数据源配置文件（`data_info.md`）。还会自动生成对应的 `.schema.json` 供大模型感知数据结构。
+- `out/`：存放由指标脚本计算生成的派生数据表及 Schema。
+- `scripts/`：存放业务数据处理和 KPI 计算的 Python 脚本。
+- `tools/`：供 Agent 调用的工具集合，如提供 DuckDB SQL 查询能力的 `execute_sql.py`。
+- `main.py`：Agent 的核心中枢，负责与大模型对话、规划任务、执行工具并返回最终分析结果。
+
+## 1. 数据获取与处理 (`data/fetch.py`)
+
+支持从 Tableau 拉取数据，自动进行长宽表转换，并自动为每个 CSV 生成对应的 `.schema.json` 文件供 Agent 动态感知。
+
+### 基本使用
+```bash
+# 默认全量拉取 data_info.md 中配置的所有视图
+python3 data/fetch.py
+
+# 支持按需只拉取指定视图（极大节省时间）
+python3 data/fetch.py --view-name 分价格段量价
+python3 data/fetch.py --view-name 细分市场销量
+python3 data/fetch.py --view-name 重点关注新能源品牌
 ```
-python3 data/fetch.py
-```
 
-## 3 个步骤（默认全自动执行）：
+### 3 个自动执行的步骤：
+1. **数据获取**：从 `data_info.md` 配置的视图导出 CSV 到 `data/`。
+2. **数据整理（转置聚合）**：若 CSV 含“度量名称”+“度量值”两列，则按其余维度分组并展开。**系统会自动对相同维度的数据进行求和聚合**，避免细粒度数据丢失。
+3. **自动更新 Schema**：不仅会更新 `data_info.md`，还会在同目录下生成附带业务描述的 `xxx.schema.json` 文件。
 
-- step1 数据获取 ：从 data_info.md 的 3 个视图导出 CSV 到 data/ （原逻辑保留）
-- step2 数据整理（转置） ：若 CSV 含 度量名称 + 度量值 两列，则按除这两列外的字段分组，把 度量名称 的不同取值展开为多列（原 度量值 写入对应列），并 原地覆盖 原 CSV
-  - 示例： 细分市场销量.csv 已变为 … ,24 年销量,25 年销量,… 这种宽表结构
-- step3 自动更新 schema ：基于整理后的 CSV 重新计算并覆盖更新 data_info.md 的 ## 信息模块（Schema） 章节（字段｜举例｜dtype｜空值率）
-
-## 可选参数：
-
-- --timeout 120 调整请求超时秒数
-- --dry-run 只打印将导出的目标，不实际请求/落盘
-
-### 可选参数（便于单独跑 step2/step3）：
-
-- --no-fetch ：跳过拉取，直接对现有 CSV 做转置 + 更新 schema
-- --no-transform ：跳过转置
-- --no-schema ：跳过 schema 更新
+### 可选参数：
+- `--timeout 120`：调整请求超时秒数
+- `--dry-run`：只打印将导出的目标，不实际请求/落盘
+- `--no-fetch`：跳过拉取，直接对现有 CSV 做转置 + 更新 schema
+- `--no-transform`：跳过转置聚合
+- `--no-schema`：跳过 schema 更新
 
 ---
 
-```
-python3 scripts/brand_sales_kpi.py
-```
+## 2. 品牌指标计算脚本 (`scripts/main_brand_sales_kpi.py`)
 
-- 继续将品牌指标结果写到 out/重点关注新能源品牌\_品牌指标.csv
-- 新增自动生成同名 schema JSON： out/重点关注新能源品牌\_品牌指标.schema.json
+运行该脚本可从基础表计算同比、环比、累计等复杂业务指标。
+```bash
+python3 scripts/main_brand_sales_kpi.py
+```
+- 计算结果写入 `out/重点关注新能源品牌_品牌指标.csv`
+- 自动生成同名 schema JSON：`out/重点关注新能源品牌_品牌指标.schema.json`
 
 ---
 
-## DeepSeek Agent（main.py）
+## 3. DeepSeek Agent 核心逻辑 (`main.py`)
 
-- step1（planning） ：每轮先让模型输出本轮 planning（不调用工具），要求明确：
+这是项目的核心调度入口，采用单次 Prompt 统筹规划与多轮自我修复（Self-Correction）的执行闭环。
 
-- 使用基础表还是派生表：基础表位于 ./data（细分市场销量/分价格段量价/重点关注新能源品牌），派生表位于 ./out
-- 需要跑哪些脚本（如需要）以生成派生表（位于 ./scripts）
-- 需要读取哪些 schema JSON 来确定列含义
-- 需要对哪些 CSV 做哪些 query_csv 查询（filters/select/order_by/limit）
+### 核心特性：
+- **Schema 动态感知**：启动时自动扫描 `data/` 和 `out/` 下的 `.schema.json`，新加表无需修改代码即可被 Agent 识别并使用。
+- **DuckDB 极速查询**：内置 `execute_sql` 工具，大模型可以直接写 SQL（支持 JOIN、GROUP BY）在内存中极速查询 CSV，彻底告别写繁琐的 Python 处理代码。
+- **动态 Python 执行与自我修复**：支持 `execute_python_code` 工具，大模型可动态编写并执行复杂 Python 脚本。如果执行报错，系统会将报错信息传回给模型，模型会自动修正代码后重试。
 
-- step2（执行查询） ：按 planning 进入工具执行阶段：
+### 执行工作流（最多 10 轮循环）：
+1. 优先思考并设计解决问题的逻辑。
+2. 优先使用 `execute_sql` 或 `execute_python_code` 直接从数据表获取答案。
+3. 获取执行结果（stdout/stderr）。如果报错，自动分析错误并重试。
+4. 当获取到核心数据后，强制终止探索，直接输出高质量的自然语言业务洞察。
 
-- 数据源选择策略：
-  - 明细核对/字段级问题/明确指向基础表 → 优先查询 ./data
-  - 指标汇总/同比环比/排名/品牌级 KPI → 优先 run_script 生成 ./out，再查询 ./out
-  - 两者都需 → 先判断派生表是否必要，必要时先 run_script，再用基础表补充
-- 执行优先级与约束：
-  - 优先“写代码一次算清楚”：返回一段 Python 代码，读取 ./data 或 ./out 下的 CSV，完成筛选/聚合并打印最终答案与关键中间汇总
-  - 代码需使用定界符包裹，主程序会自动执行：
-    - ‹execute_python›
-    - …Python 代码…
-    - ‹/execute_python›
-  - 如确需派生表，最多执行一次 run_script；随后用代码直接对 CSV 计算
-  - 使用 query_csv 时 path 必须是 CSV 文件，不能是目录；否则工具会返回可选 CSV 列表
-  - 主程序会在终端 stderr 输出每轮 planning/执行日志与工具调用摘要，stdout 输出最终答案
-  - 信息不足时输出 NEED_MORE 进入下一轮；否则输出最终答案并退出
-
-### 两种模式有什么不同？
-
-- `python3 main.py --query "..."`：普通对话模式（非思考模式）
-  - 更快、输出更短，适合大多数日常问答/数据查询
-  - 支持工具调用与自动执行 ‹execute_python› 代码块，按需循环（最多 5 轮）后给出最终回答
-
+### 两种模式说明：
+- `python3 main.py --query "..."`：普通对话模式
+  - 速度快、消耗低，适合大多数日常问答和数据查询。
 - `python3 main.py --thinking --query "..."`：思考模式（thinking enabled）
-  - 模型会输出更强的推理过程（内部会携带 reasoning_content），通常更“稳”，但更慢、token 消耗更高
-  - 同样支持工具调用与自动执行 ‹execute_python› 代码块，按需循环（最多 5 轮）
-  - 注意：思考模式下部分采样参数（如 temperature/top_p 等）不会生效（兼容性考虑仍可传，但会被忽略）
+  - 模型会输出更强的内部推理过程，逻辑更“稳”，但速度较慢、token 消耗更高。
 
-### 使用示例
-
+### 使用示例：
 ```bash
+# 查询基础表（Agent 会自动写 SQL 过滤、汇总并返回）
+python3 main.py --query "20万以上新能源市场 2026 年 2 月总销量"
+
+# 跨表查询与计算
 python3 main.py --query "运行 main_brand_sales_kpi.py，并找出 2026-02 月同比最高的品牌，给出对应的 max月销量/上月销量/月环比/去年同月销量"
-```
 
-```bash
+# 使用思考模式深入分析
 python3 main.py --thinking --query "2026年 2 月智己品牌的销量如何?"
 ```
 
-示例输出（节选）：
-
+**示例输出（节选）：**
 ```
-2026年2月智己品牌的销量为 3,136 辆
-- 上月销量（2026年1月）：4,934 辆
-- 月环比：-36.44%
-- 去年同月销量（2025年2月）：2,543 辆
-- 月同比：+23.32%
-- 今年累计销量（1-2月）：8,070 辆
-- 去年累计销量（1-2月）：6,145 辆
-- 累计同比：+31.33%
+最终答案：
+20万以上新能源市场在2026年2月的总销量为 191,773 辆。
+其中各价格段销量分布如下：
+  - 20-25万: 66,178 辆 (占比 34.5%)
+  - 25-30万: 53,166 辆 (占比 27.7%)
+  - 30-35万: 36,860 辆 (占比 19.2%)
+...
 ```

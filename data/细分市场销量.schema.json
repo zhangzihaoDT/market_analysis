@@ -1,0 +1,67 @@
+{
+  "file": "细分市场销量.csv",
+  "description": "按区域（parent_region_name）与价格段（TP 5万1档）划分的市场销量。",
+  "rows": 308,
+  "fields": [
+    {
+      "name": "parent_region_name",
+      "example": "二区-鄂桂湘",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "TP 5万1档",
+      "example": "5-10万",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "燃料类型 (组)",
+      "example": "其他能源",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "24 年销量",
+      "example": "220464",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "25 年销量",
+      "example": "209238",
+      "dtype": "int",
+      "null_rate": 0.0
+    },
+    {
+      "name": "24 年 2 月销量",
+      "example": "13357",
+      "dtype": "int",
+      "null_rate": 0.02922077922077922
+    },
+    {
+      "name": "25 年 1 月销量",
+      "example": "27408",
+      "dtype": "int",
+      "null_rate": 0.032467532467532464
+    },
+    {
+      "name": "25 年 2 月销量",
+      "example": "12302",
+      "dtype": "int",
+      "null_rate": 0.03571428571428571
+    },
+    {
+      "name": "26 年 1 月销量",
+      "example": "18519",
+      "dtype": "int",
+      "null_rate": 0.016233766233766232
+    },
+    {
+      "name": "26 年 2 月销量",
+      "example": "17970",
+      "dtype": "int",
+      "null_rate": 0.016233766233766232
+    }
+  ]
+}

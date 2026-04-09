@@ -1,0 +1,73 @@
+{
+  "file": "分价格段量价.csv",
+  "description": "按品牌-车型构建的单一车型 TP 价格重心数据（TP重心 (数据桶)），用于查看各桶区间有哪些车型及其销量/价格表现。",
+  "rows": 52030,
+  "fields": [
+    {
+      "name": "2026 年 2 月分车型 TP重心 (数据桶)",
+      "example": "0K",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "品牌",
+      "example": "宝马",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "子车型",
+      "example": "7系 PHEV",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "日期 年/月",
+      "example": "2026年2月",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "燃料类型 (组)",
+      "example": "新能源",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "燃料类型 (组) 1",
+      "example": "PHEV 和 REEV",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "车型",
+      "example": "7系",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "车身形式",
+      "example": "轿车",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "TP重心",
+      "example": "32274.129",
+      "dtype": "float",
+      "null_rate": 0.9912742648472035
+    },
+    {
+      "name": "销量",
+      "example": "1489",
+      "dtype": "float",
+      "null_rate": 0.9912742648472035
+    },
+    {
+      "name": "2026 年 2 月分车型 TP重心",
+      "example": "32274.129",
+      "dtype": "float",
+      "null_rate": 0.990909090909091
+    }
+  ]
+}

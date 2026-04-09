@@ -1,0 +1,67 @@
+{
+  "file": "重点关注新能源品牌.csv",
+  "description": "重点关注品牌的历史销量表现。",
+  "rows": 160,
+  "fields": [
+    {
+      "name": "品牌",
+      "example": "阿维塔",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "子车型",
+      "example": "阿维塔06 EV",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "燃料类型 (组)",
+      "example": "新能源",
+      "dtype": "string",
+      "null_rate": 0.0
+    },
+    {
+      "name": "24 年销量",
+      "example": "6692",
+      "dtype": "int",
+      "null_rate": 0.3
+    },
+    {
+      "name": "25 年销量",
+      "example": "21587",
+      "dtype": "int",
+      "null_rate": 0.09375
+    },
+    {
+      "name": "24 年 2 月销量",
+      "example": "644",
+      "dtype": "int",
+      "null_rate": 0.56875
+    },
+    {
+      "name": "25 年 1 月销量",
+      "example": "88",
+      "dtype": "int",
+      "null_rate": 0.36875
+    },
+    {
+      "name": "25 年 2 月销量",
+      "example": "28",
+      "dtype": "int",
+      "null_rate": 0.3375
+    },
+    {
+      "name": "26 年 1 月销量",
+      "example": "696",
+      "dtype": "int",
+      "null_rate": 0.175
+    },
+    {
+      "name": "26 年 2 月销量",
+      "example": "464",
+      "dtype": "int",
+      "null_rate": 0.16875
+    }
+  ]
+}

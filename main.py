@@ -5,14 +5,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
-from tools.query_csv import query_csv_tool
-
-import tempfile
-import os
-
+from tools.execute_sql import execute_sql_tool
 
 def load_dotenv(dotenv_path: Path) -> dict[str, str]:
     if not dotenv_path.exists():
@@ -151,6 +148,41 @@ def run_script_tool(repo_root: Path, *, script_name: str, args: list[str] | None
     )
 
 
+def execute_python_code_tool(repo_root: Path, *, code: str, timeout_s: int) -> str:
+    """Execute Python code in a temporary file and return stdout/stderr."""
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as tf:
+        tf.write(code)
+        temp_path = tf.name
+    try:
+        proc = subprocess.run(
+            [sys.executable, temp_path],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+            env={**os.environ},
+        )
+        return json.dumps(
+            {
+                "ok": proc.returncode == 0,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout.strip(),
+                "stderr": proc.stderr.strip(),
+            },
+            ensure_ascii=False,
+        )
+    except subprocess.TimeoutExpired:
+        return json.dumps({"ok": False, "error": f"Execution timed out after {timeout_s}s"}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+    finally:
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass
+
+
 def log(line: str) -> None:
     sys.stderr.write(line.rstrip() + "\n")
     sys.stderr.flush()
@@ -176,10 +208,22 @@ def summarize_tool_result(tool_name: str, tool_content: str) -> str:
             f"outputs: {output_paths}"
         )
 
-    if tool_name == "query_csv":
+    if tool_name == "execute_sql":
         return (
-            f"[tool:query_csv] ok={data.get('ok')} path={data.get('path')} "
-            f"total_matched={data.get('total_matched')} rows_returned={len(data.get('rows') or [])}"
+            f"[tool:execute_sql] ok={data.get('ok')} "
+            f"rows_returned={data.get('rows_returned')}\n"
+            f"columns={data.get('columns')}"
+        )
+
+    if tool_name == "execute_python_code":
+        stdout = (data.get("stdout") or "").strip()
+        stderr = (data.get("stderr") or "").strip()
+        out_first = "\n".join(stdout.splitlines()[:10])
+        err_first = "\n".join(stderr.splitlines()[:10])
+        return (
+            f"[tool:execute_python_code] ok={data.get('ok')} returncode={data.get('returncode')}\n"
+            f"stdout(first 10 lines):\n{out_first}\n"
+            f"stderr(first 10 lines):\n{err_first}"
         )
 
     return f"[tool:{tool_name}] ok={data.get('ok')}"
@@ -209,6 +253,32 @@ def deepseek_chat(
     if thinking:
         body["thinking"] = {"type": "enabled"}
     return http_post_json(url, headers=headers, body=body, timeout_s=timeout_s)
+
+
+def build_dynamic_schema_prompt(repo_root: Path) -> str:
+    schema_info = []
+    for dir_name in ["data", "out"]:
+        dir_path = repo_root / dir_name
+        if not dir_path.exists():
+            continue
+        
+        for schema_file in sorted(dir_path.glob("*.schema.json")):
+            try:
+                with open(schema_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    file_name = data.get("file", schema_file.name.replace(".schema.json", ".csv"))
+                    description = data.get("description", "")
+                    fields = data.get("fields", [])
+                    field_names = [f["name"] for f in fields]
+                    
+                    desc_str = f"（{description}）" if description else ""
+                    schema_info.append(f"- ./{dir_name}/{file_name}{desc_str}：包含字段 {', '.join(field_names)}")
+            except Exception:
+                pass
+                
+    if not schema_info:
+        return "（未扫描到任何数据表的 schema.json 文件）"
+    return "\n".join(schema_info)
 
 
 def main(argv: list[str]) -> int:
@@ -251,32 +321,33 @@ def main(argv: list[str]) -> int:
         {
             "type": "function",
             "function": {
-                "name": "query_csv",
-                "description": "Query a CSV under ./out or ./data with simple filters and return rows as JSON (path must be a CSV file, not a directory)",
+                "name": "execute_sql",
+                "description": "Execute DuckDB SQL query directly against CSV files. e.g. SELECT * FROM 'data/xxx.csv'",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "CSV file path (not directory), absolute or relative to repo"},
-                        "select": {"type": "array", "items": {"type": "string"}},
-                        "filters": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "col": {"type": "string"},
-                                    "op": {"type": "string", "description": "eq|ne|contains|in|gt|gte|lt|lte"},
-                                    "value": {},
-                                },
-                                "required": ["col", "op", "value"],
-                            },
+                        "sql": {
+                            "type": "string",
+                            "description": "DuckDB compatible SQL query. Enclose file paths in single quotes.",
                         },
-                        "order_by": {
-                            "type": "object",
-                            "properties": {"col": {"type": "string"}, "desc": {"type": "boolean"}},
-                        },
-                        "limit": {"type": "integer"},
+                        "timeout_s": {"type": "integer", "description": "Timeout seconds for query execution"},
                     },
-                    "required": ["path"],
+                    "required": ["sql"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "execute_python_code",
+                "description": "Execute python code and return stdout/stderr. Use this for complex data processing or computation.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string", "description": "Python code to execute. Can import standard libraries, duckdb, pandas, etc."},
+                        "timeout_s": {"type": "integer", "description": "Timeout seconds for running the code. Default is 30.", "default": 30},
+                    },
+                    "required": ["code"],
                 },
             },
         }
@@ -286,26 +357,25 @@ def main(argv: list[str]) -> int:
     if not query:
         query = sys.stdin.read().strip()
 
+    dynamic_schemas_str = build_dynamic_schema_prompt(repo_root)
+
     system_prompt = (
-        "你是一个数据分析助手，拥有 ./data/ 下全部数据的读取权限。\n"
+        "你是一个数据分析助手，拥有 ./data/ 和 ./out/ 下全部数据的读取权限。\n"
         "\n"
-        "数据集（基础表，位于 ./data）：\n"
-        "1) 细分市场销量：按区域（parent_region_name）与价格段（TP 5万1档）划分的市场销量。\n"
-        "2) 分价格段量价：按品牌-车型构建的单一车型 TP 价格重心数据（TP重心 (数据桶)），用于查看各桶区间有哪些车型及其销量/价格表现。\n"
-        "3) 重点关注新能源品牌：重点关注品牌的历史销量表现。\n"
+        "数据集（动态感知，位于 ./data 和 ./out）：\n"
+        f"{dynamic_schemas_str}\n"
         "\n"
         "可用工具：\n"
         "- run_script：运行 ./scripts 下脚本，通常产出 ./out 下的派生表；stdout 会包含 '输出: <path>'，并可能包含 schema JSON（'输出Schema: <path>'）。\n"
-        "- query_csv：对 ./data 或 ./out 下的 CSV 做筛选查询。\n"
+        "- execute_sql：使用 DuckDB 直接针对 ./data 或 ./out 下的 CSV 执行 SQL 查询（例如 `SELECT * FROM 'data/xxx.csv' WHERE ... GROUP BY ...`）。\n"
+        "- execute_python_code：执行 Python 代码，用于复杂计算、多表处理等，你可以直接在代码里 import duckdb, pandas 等处理 CSV 数据。\n"
         "\n"
-        "数据源选择：\n"
-        "1) 若是明细核对/字段级问题/明确指向基础表，优先查 ./data。\n"
-        "2) 若是指标汇总/同比环比/排名/品牌级 KPI，优先 run_script 生成 ./out，再查 ./out。\n"
-        "3) 若两者都需要：先判断派生表是否必要，必要时先 run_script，再用基础表补充。\n"
-        "\n"
-        "工作流（最多 5 轮循环）：\n"
-        "- step1 planning：明确使用基础表还是派生表；要运行哪些脚本；要读哪些 schema；要做哪些 CSV 查询。\n"
-        "- step2 执行：调用工具并基于结果回答；若信息不足输出 NEED_MORE，否则输出最终答案。"
+        "执行原则与工作流：\n"
+        "1. 优先思考并设计解决问题的逻辑。\n"
+        "2. 优先使用 execute_sql 或者 execute_python_code 直接从基础表获取答案（DuckDB 性能最好）。\n"
+        "3. 调用工具后，系统会将执行结果（如 stdout、错误信息）作为 Tool Response 返回给你。\n"
+        "4. 你需要基于执行结果继续思考。如果报错，请分析错误信息，修改 SQL 或 Python 代码后重新调用工具。\n"
+        "5. **强制终止指令**：当你通过工具获得了能够直接、准确回答用户核心问题的关键数据时，**必须立即停止任何进一步的数据探索（如查区域、查同比、查其他不相关价格段等）**，直接输出最终的纯文本自然语言回答，不再调用任何工具。\n"
     )
 
     messages: list[dict] = [
@@ -313,150 +383,73 @@ def main(argv: list[str]) -> int:
         {"role": "user", "content": query},
     ]
 
-    max_rounds = 5
+    max_rounds = 10
     for round_idx in range(max_rounds):
-        log(f"=== Loop Round {round_idx + 1}/{max_rounds}: planning ===")
-        planning_prompt = (
-            "请先输出本轮 planning，要求：\n"
-            "1) 说明你将运行哪些脚本（如需要）以及为什么；\n"
-            "2) 你将使用哪些 schema JSON 来确定列含义；\n"
-            "3) 你将对哪些 CSV 发起哪些 query_csv 查询（filters/select/order_by/limit）。\n"
-            "planning 输出完成后不要调用工具。若本轮无需继续，直接给出最终答案。"
-        )
-        resp_plan = deepseek_chat(
+        log(f"=== Loop Round {round_idx + 1}/{max_rounds} ===")
+        
+        resp = deepseek_chat(
             base_url=base_url,
             api_key=api_key,
             model=args.model,
-            messages=messages + [{"role": "user", "content": planning_prompt}],
-            tools=None,
+            messages=messages,
+            tools=tool_spec,
             timeout_s=args.timeout,
             thinking=args.thinking,
         )
-        choice_plan = (resp_plan.get("choices") or [{}])[0]
-        msg_plan = choice_plan.get("message") or {}
-        if "role" not in msg_plan:
-            msg_plan["role"] = "assistant"
-        messages.append(msg_plan)
-        plan_content = (msg_plan.get("content") or "").strip()
-        if plan_content:
-            log(plan_content)
-
-        log(f"=== Loop Round {round_idx + 1}/{max_rounds}: execute ===")
-        execution_prompt = (
-            "按上一条 planning 执行，但尽量避免多次工具调用：\n"
-            "- 优先“写代码一次算清楚”的方式解决问题。直接生成能够读取 ./data 或 ./out 下目标 CSV、完成筛选/聚合并给出答案的 Python 代码。\n"
-            "- 如果确需生成派生表，最多执行一次 run_script；随后用代码直接对 CSV 进行计算。\n"
-            "- 严禁对目录调用 query_csv；path 必须为 CSV 文件路径。\n"
-            "- 返回格式：仅返回一段 Python 代码，使用如下定界符包裹：\n"
-            "‹execute_python›\n"
-            "<python code here>\n"
-            "‹/execute_python›\n"
-            "- 代码要求：\n"
-            "  1) 只用标准库（csv、json、pathlib 等）；\n"
-            "  2) 显式写出目标 CSV 路径与筛选条件；\n"
-            "  3) 打印最终答案与关键中间汇总（如各桶/各品牌数值）。\n"
-            "若信息仍不足以写出可靠代码，再调用工具；若还需要下一轮，输出 NEED_MORE；否则直接给出最终答案。"
-        )
-        messages.append({"role": "user", "content": execution_prompt})
-
-        while True:
-            resp = deepseek_chat(
-                base_url=base_url,
-                api_key=api_key,
-                model=args.model,
-                messages=messages,
-                tools=tool_spec,
-                timeout_s=args.timeout,
-                thinking=args.thinking,
-            )
-            choice = (resp.get("choices") or [{}])[0]
-            msg = choice.get("message") or {}
-            messages.append(msg)
-            tool_calls = msg.get("tool_calls")
-            if not tool_calls:
-                content = (msg.get("content") or "").strip()
-                if content:
-                    log(content)
-                # Execute embedded python code if present
-                start_tag = "‹execute_python›"
-                end_tag = "‹/execute_python›"
-                if start_tag in content and end_tag in content:
-                    code_blocks: list[str] = []
-                    start_idx = 0
-                    while True:
-                        s = content.find(start_tag, start_idx)
-                        if s == -1:
-                            break
-                        e = content.find(end_tag, s + len(start_tag))
-                        if e == -1:
-                            break
-                        code = content[s + len(start_tag):e]
-                        code_blocks.append(code.strip())
-                        start_idx = e + len(end_tag)
-                    if code_blocks:
-                        code = code_blocks[0]
-                        log("[execute_python] detected, running code block")
-                        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as tf:
-                            tf.write(code)
-                            temp_path = tf.name
-                        try:
-                            proc = subprocess.run(
-                                [sys.executable, temp_path],
-                                cwd=str(repo_root),
-                                capture_output=True,
-                                text=True,
-                                timeout=args.timeout,
-                                check=False,
-                                env={**os.environ},
-                            )
-                            if proc.stdout:
-                                print(proc.stdout.rstrip(), flush=True)
-                            if proc.stderr:
-                                log(proc.stderr.rstrip())
-                            return proc.returncode
-                        finally:
-                            try:
-                                os.unlink(temp_path)
-                            except Exception:
-                                pass
-                if content == "NEED_MORE":
-                    break
+        
+        choice = (resp.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        messages.append(msg)
+        
+        tool_calls = msg.get("tool_calls")
+        content = (msg.get("content") or "").strip()
+        
+        if not tool_calls:
+            print("\n最终答案：", flush=True)
+            if content:
                 print(content, flush=True)
-                return 0
+            return 0
+            
+        if content:
+            log(content)
+            
+        for tc in tool_calls:
+            fn = (tc.get("function") or {}).get("name")
+            raw_args = (tc.get("function") or {}).get("arguments") or "{}"
+            try:
+                call_args = json.loads(raw_args)
+            except Exception:
+                call_args = {}
 
-            for tc in tool_calls:
-                fn = (tc.get("function") or {}).get("name")
-                raw_args = (tc.get("function") or {}).get("arguments") or "{}"
-                try:
-                    call_args = json.loads(raw_args)
-                except Exception:
-                    call_args = {}
+            if fn == "run_script":
+                log(f"[tool call] run_script args={raw_args}")
+                result = run_script_tool(
+                    repo_root,
+                    script_name=str(call_args.get("script_name") or ""),
+                    args=call_args.get("args") or [],
+                    timeout_s=int(call_args.get("timeout_s") or args.timeout),
+                )
+            elif fn == "execute_sql":
+                log(f"[tool call] execute_sql args={raw_args}")
+                result = execute_sql_tool(
+                    repo_root,
+                    sql=str(call_args.get("sql") or ""),
+                    timeout_s=int(call_args.get("timeout_s") or args.timeout),
+                )
+            elif fn == "execute_python_code":
+                log(f"[tool call] execute_python_code")
+                result = execute_python_code_tool(
+                    repo_root,
+                    code=str(call_args.get("code") or ""),
+                    timeout_s=int(call_args.get("timeout_s") or 30),
+                )
+            else:
+                result = json.dumps({"ok": False, "error": f"unknown tool: {fn}"}, ensure_ascii=False)
 
-                if fn == "run_script":
-                    log(f"[tool call] run_script args={raw_args}")
-                    result = run_script_tool(
-                        repo_root,
-                        script_name=str(call_args.get("script_name") or ""),
-                        args=call_args.get("args") or [],
-                        timeout_s=int(call_args.get("timeout_s") or args.timeout),
-                    )
-                elif fn == "query_csv":
-                    log(f"[tool call] query_csv args={raw_args}")
-                    result = query_csv_tool(
-                        repo_root,
-                        path=str(call_args.get("path") or ""),
-                        select=call_args.get("select"),
-                        filters=call_args.get("filters"),
-                        order_by=call_args.get("order_by"),
-                        limit=int(call_args.get("limit") or 20),
-                    )
-                else:
-                    result = json.dumps({"ok": False, "error": f"unknown tool: {fn}"}, ensure_ascii=False)
+            messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
+            log(summarize_tool_result(str(fn or ""), result))
 
-                messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result})
-                log(summarize_tool_result(str(fn or ""), result))
-
-    print("在 5 轮内未能完成回答。请缩小问题范围或指定要运行的脚本/查询条件。", file=sys.stderr)
+    print(f"在 {max_rounds} 轮内未能完成回答，可能任务过于复杂或模型陷入死循环。", file=sys.stderr)
     return 1
 
 
