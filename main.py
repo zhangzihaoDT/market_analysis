@@ -242,7 +242,7 @@ def deepseek_chat(
     messages: list[dict],
     tools: list[dict] | None,
     timeout_s: int,
-    thinking: bool = False,
+    thinking: bool,
 ) -> dict:
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
@@ -363,7 +363,7 @@ def main(argv: list[str]) -> int:
         extractor = PatternExtractor(
             store, 
             deepseek_chat, 
-            {"base_url": base_url, "api_key": api_key, "model": args.model, "timeout_s": args.timeout, "thinking": False, "tools": None}
+            {"base_url": base_url, "api_key": api_key, "model": args.model, "timeout_s": args.timeout, "thinking": True, "tools": None}
         )
         extractor.summarize()
         print("Learning from past mistakes completed.", flush=True)

@@ -79,16 +79,17 @@ python3 scripts/main_brand_sales_kpi.py
   - 速度快、消耗低，会自动读取记忆库优化查询策略，适合大多数日常问答和数据查询。
 - `python3 main.py --learn`：学习模式
   - 让 Agent 反思过去执行不佳的查询，将“隐性经验”总结为“显性规则”固化到数据库中。
+  - **在该模式下，系统会强制开启 DeepSeek 的深度思考（Thinking）能力**，通过大幅提升算力来深度归因和总结高质量的策略。
 
 ### 使用示例：
 ```bash
-# 查询基础表（Agent 会自动写 SQL 过滤、汇总并返回）
+# 查询基础表（Agent 会自动读取 Memory 并写 SQL 过滤、汇总）
 python3 main.py --query "20万以上新能源市场 2026 年 2 月总销量"
 
 # 跨表查询与计算
-python3 main.py --query "运行 main_brand_sales_kpi.py，并找出 2026-02 月同比最高的品牌，给出对应的 max月销量/上月销量/月环比/去年同月销量"
+python3 main.py --query "运行 main_brand_sales_kpi.py，并找出 2026-02 月同比最高的品牌"
 
-# 触发 LLM 反思与经验学习
+# 让 Agent 基于历史失败记录进行总结学习（高算力总结）
 python3 main.py --learn
 ```
 
